@@ -7,9 +7,12 @@ show_help() {
 	local cache_size
 	cache_size=$(du -sh @TERMUX_CACHE_DIR@/apt/archives 2>/dev/null | cut -f1)
 
-	echo 'Usage: pkg command [arguments]'
+	echo 'Usage: pkg [--check-mirror] command [arguments]'
 	echo
-	echo 'A tool for managing packages. Commands:'
+	echo 'A tool for managing packages.'
+	echo '  --check-mirror forces a re-check of availability of mirrors'
+	echo
+	echo 'Commands:'
 	echo
 	echo '  autoclean            - Remove all outdated packages from .deb package'
 	echo '                         cache.'
@@ -68,36 +71,44 @@ last_modified() {
 	echo $((now - mtime))
 }
 
-select_mirror() {
-	local main_repo="https://packages-cf.termux.org/apt/termux-main"
+has_repo() {
+	# Check if root-repo or x11-repo are installed
+	repo="$1"
 
-	declare -A mirrors
-	mirrors[16]="$main_repo"
-	mirrors[14]="https://dl.kcubeterm.com/termux-main"
-	mirrors[13]="https://grimler.se/termux-packages-24"
-	mirrors[12]="https://termux.mentality.rip/termux-main"
-	mirrors[11]="https://termux.astra.in.ua/apt/termux-main"
-	mirrors[10]="https://termux.librehat.com/apt/termux-main"
-	mirrors[ 9]="https://mirror.mwt.me/termux/main"
-	mirrors[ 8]="https://termux.sahilister.in/apt/termux-main"
-	mirrors[ 7]="https://plug-mirror.rcac.purdue.edu/termux/termux-main"
+	if [ -f "/etc/apt/sources.list.d/$repo.list" ]; then
+		echo true
+	else
+		echo false
+	fi
+}
+
+get_random_mirror() {
+	array=("${!1}")
+	echo -n ${array["$[RANDOM % ${#array[@]}]"]}
+}
+
+select_mirror() {
+	local default_repo="@TERMUX_PREFIX@/etc/termux/mirrors/default"
+
+	if [ -d "@TERMUX_PREFIX@/etc/termux/chosen_mirrors" ]; then
+		mirrors=($(find @TERMUX_PREFIX@/etc/termux/chosen_mirrors/ -type f))
+	else
+		echo "No group of mirrors selected. You might want to select a group by running 'termux-change-repo'"
+		mirrors=("@TERMUX_PREFIX@/etc/termux/mirrors/default")
+		mirrors+=($(find @TERMUX_PREFIX@/etc/termux/mirrors/{europe,north_america,iran,china}/ -type f))
+	fi
 
 	local current_mirror
 	current_mirror=$(grep -m 1 -P "^\s*deb\s+" @TERMUX_PREFIX@/etc/apt/sources.list | grep -oP 'https?://[^\s]+')
 
-	# Do not update mirror if:
-	# * If $TERMUX_PKG_NO_MIRROR_SELECT was set.
-	# * Uses .cn domain - specific to Chinese users.
-	# * Uses mirror.bardia.tech, mirror based in Iran.
-	if [ -n "${TERMUX_PKG_NO_MIRROR_SELECT-}" ] || \
-		[[ "$(hostname "$current_mirror")" == *".cn" ]] || \
-		[[ "$(hostname "$current_mirror")" == *"mirror.bardia.tech"* ]]; then
+	# Do not update mirror if $TERMUX_PKG_NO_MIRROR_SELECT was set.
+	if [ -n "${TERMUX_PKG_NO_MIRROR_SELECT-}" ] && [ ! -n "$current_mirror" ]; then
 		return
 	fi
 
 	# Mirrors are rotated if 6 hours timeout has been passed or mirror is no longer accessible.
 	local pkgcache="@TERMUX_CACHE_DIR@/apt/pkgcache.bin"
-	if [ -e "$pkgcache" ] && (( $(last_modified "$pkgcache") <= 6 * 3600 )); then
+	if [ -e "$pkgcache" ] && (( $(last_modified "$pkgcache") <= 6 * 3600 )) && [ "$force_check_mirror" = "false" ]; then
 		if [ -n "$current_mirror" ]; then
 			echo -n "Checking availability of current mirror: "
 			if check_mirror "$current_mirror"; then
@@ -111,12 +122,12 @@ select_mirror() {
 
 	# Test mirror availability, remove unaccessible mirrors from list.
 	echo "Testing the available mirrors:"
-	local w total_mirror_weight=0
+	local w
 	for w in "${!mirrors[@]}"; do
 		echo -n "[*] ${mirrors[$w]}: "
-		if check_mirror "${mirrors[$w]}"; then
+		mirror=$(source ${mirrors[$w]}; echo $MAIN)
+		if check_mirror "$mirror"; then
 			echo "ok"
-			total_mirror_weight=$((total_mirror_weight + w))
 		else
 			echo "bad"
 			unset "mirrors[$w]"
@@ -124,27 +135,25 @@ select_mirror() {
 	done
 	unset w
 
-	# Weight-based mirror selection.
 	local selected_mirror=""
-	if ((total_mirror_weight > 0)); then
-		local w random_weight calc_weight=0
-		random_weight=$((RANDOM % total_mirror_weight + 1))
-		for w in $(echo "${!mirrors[@]}" | tr ' ' '\n' | sort -n); do
-			calc_weight=$((calc_weight + w))
-
-			if ((calc_weight >= random_weight)); then
-				echo "Picking mirror: ${mirrors[$w]}"
-				selected_mirror="${mirrors[$w]}"
-				break
-			fi
-		done
+	if [ "${#mirrors[@]}" -gt 0 ]; then
+		# Get random mirror from array (without any weights)
+		selected_mirror="$(get_random_mirror "mirrors[@]")"
+	else
+		selected_mirror="$default_repo"
 	fi
 
 	if [ -n "$selected_mirror" ]; then
-		echo "deb $selected_mirror/ stable main" > @TERMUX_PREFIX@/etc/apt/sources.list
-	else
-		echo "Using fallback mirror: $main_repo"
-		echo "deb $main_repo/ stable main" > @TERMUX_PREFIX@/etc/apt/sources.list
+		(
+			source "$selected_mirror"
+			echo "deb $MAIN stable main" > @TERMUX_PREFIX@/etc/apt/sources.list
+			if [ "$(has_repo x11)" == "true" ]; then
+				echo "deb $X11 x11 main" > @TERMUX_PREFIX@/etc/apt/sources.list.d/x11.list
+			fi
+			if [ "$(has_repo root)" == "true" ]; then
+				echo "deb $ROOT root stable" > @TERMUX_PREFIX@/etc/apt/sources.list.d/root.list
+			fi
+		)
 	fi
 }
 
@@ -183,6 +192,12 @@ update_apt_cache() {
 
 if [ $# = 0 ]; then
 	show_help
+fi
+
+force_check_mirror=false
+if [ "$1" = "--check-mirror" ]; then
+    force_check_mirror=true
+    shift 1
 fi
 
 CMD="$1"

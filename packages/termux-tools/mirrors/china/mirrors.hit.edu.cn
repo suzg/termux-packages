@@ -1,0 +1,5 @@
+# This file is sourced by pkg
+# Mirror by Harbin Institute of Technology
+MAIN="https://mirrors.hit.edu.cn/termux/apt/termux-main"
+ROOT="https://mirrors.hit.edu.cn/termux/apt/termux-root"
+X11="https://mirrors.hit.edu.cn/termux/apt/termux-x11"
