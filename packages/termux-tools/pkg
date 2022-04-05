@@ -75,7 +75,7 @@ has_repo() {
 	# Check if root-repo or x11-repo are installed
 	repo="$1"
 
-	if [ -f "/etc/apt/sources.list.d/$repo.list" ]; then
+	if [ -f "@TERMUX_PREFIX@/etc/apt/sources.list.d/$repo.list" ]; then
 		echo true
 	else
 		echo false
@@ -95,7 +95,7 @@ select_mirror() {
 	else
 		echo "No group of mirrors selected. You might want to select a group by running 'termux-change-repo'"
 		mirrors=("@TERMUX_PREFIX@/etc/termux/mirrors/default")
-		mirrors+=($(find @TERMUX_PREFIX@/etc/termux/mirrors/{europe,north_america,iran,china}/ -type f))
+		mirrors+=($(find @TERMUX_PREFIX@/etc/termux/mirrors/{europe,north_america,china,iran}/ -type f))
 	fi
 
 	local current_mirror
