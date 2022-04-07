@@ -140,6 +140,7 @@ select_mirror() {
 		# Get random mirror from array (without any weights)
 		selected_mirror="$(get_random_mirror "mirrors[@]")"
 	else
+		echo "[!] All mirrors were bad, will try to use default one"
 		selected_mirror="$default_repo"
 	fi
 
